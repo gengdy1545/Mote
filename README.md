@@ -60,7 +60,7 @@ The config file is `~/.config/mote.json`:
 }
 ```
 
-`book` chooses the list. Maimemo is `"book": "maimemo"`. Built-in books are `cet4`, `cet6`, `ielts`, and `toefl`. A custom name is lowercase, such as `"book": "travel"`. `mote book cet4` writes that field and keeps the token. Each book's position stays where you left it, including after a switch away and back. Importing the same name again replaces the list and returns to the first word. Built-in names cannot be deleted. Their spellings are the `cet4`, `cet6`, `ielts`, and `toefl` tags from [ECDICT](https://github.com/skywind3000/ECDICT) (MIT).
+`book` chooses the list. Maimemo is `"book": "maimemo"`. Built-in books are `cet4`, `cet6`, `ielts`, and `toefl`. A custom name is lowercase, such as `"book": "travel"`. `mote book cet4` writes that field and keeps the token. Each book's position stays where you left it, including after a switch away and back. Importing the same name again replaces the list and returns to the first word. Built-in names cannot be deleted. Their spellings are the `cet4`, `cet6`, `ielts`, and `toefl` tags from [ECDICT](https://github.com/skywind3000/ECDICT), Copyright (c) 2025 Linwei, MIT License. That license covers the lists, and Mote's license does not replace it. The notice is in `NOTICE`.
 
 Copy the token from <https://open.maimemo.com/open/api/v1/tokens/openapi>. `mote auth --token <token>` writes the file. `MOTE_MAIMEMO_TOKEN` overrides the file. `MOTE_CONFIG` selects another config path.
 
