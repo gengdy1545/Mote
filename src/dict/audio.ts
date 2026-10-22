@@ -1,26 +1,95 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
-let playing: ChildProcess | null = null;
+export type PlayResult =
+  | { kind: "ok" }
+  | { kind: "missing-player" }
+  | { kind: "failed"; code: number | null };
 
-export function playAudio(path: string): void {
+export type AudioFailure = "请求失败" | "没有读音" | "文件无效";
+
+type PlayerAttempt = {
+  command: string;
+  args: string[];
+};
+
+type PlayerChild = {
+  exitCode: number | null;
+  on(event: "error", listener: (error: NodeJS.ErrnoException) => void): unknown;
+  on(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown;
+  kill(signal: NodeJS.Signals): unknown;
+};
+
+type SpawnPlayer = (attempt: PlayerAttempt) => PlayerChild;
+
+const stopped = new WeakSet<object>();
+let playing: PlayerChild | null = null;
+
+function playerAttempts(platform: NodeJS.Platform, file: string): PlayerAttempt[] {
+  if (platform === "darwin") return [{ command: "afplay", args: [file] }];
+  return [
+    { command: "ffplay", args: ["-nodisp", "-autoexit", "-loglevel", "error", file] },
+    { command: "mpv", args: ["--no-video", "--really-quiet", file] },
+  ];
+}
+
+export function playAudio(path: string, done: (result: PlayResult) => void): void {
   stopAudio();
-  playing = spawn("afplay", [path], { stdio: "ignore" });
-  const child = playing;
-  child.on("exit", () => {
-    if (playing === child) playing = null;
-  });
+  runPlayer(playerAttempts(process.platform, path), (attempt) => {
+    return spawn(attempt.command, attempt.args, { stdio: "ignore" }) as PlayerChild;
+  }, done);
+}
+
+function runPlayer(attempts: PlayerAttempt[], spawnPlayer: SpawnPlayer, done: (result: PlayResult) => void): void {
+  const tryAt = (index: number) => {
+    const attempt = attempts[index];
+    if (!attempt) {
+      done({ kind: "missing-player" });
+      return;
+    }
+    const child = spawnPlayer(attempt);
+    playing = child;
+    let reported = false;
+    const finish = (result: PlayResult) => {
+      if (reported || stopped.has(child)) return;
+      reported = true;
+      if (playing === child) playing = null;
+      done(result);
+    };
+    child.on("error", (error) => {
+      if (playing === child) playing = null;
+      if (reported || stopped.has(child)) return;
+      reported = true;
+      if (error.code === "ENOENT") {
+        tryAt(index + 1);
+        return;
+      }
+      done({ kind: "failed", code: null });
+    });
+    child.on("exit", (code) => {
+      finish(code === 0 ? { kind: "ok" } : { kind: "failed", code });
+    });
+  };
+  tryAt(0);
 }
 
 export function stopAudio(): void {
-  if (playing && playing.exitCode === null) playing.kill("SIGTERM");
+  const child = playing;
   playing = null;
+  if (child && child.exitCode === null) {
+    stopped.add(child);
+    child.kill("SIGTERM");
+  }
 }
 
 export class DownloadFailed extends Error {
-  constructor(readonly permanent: boolean) {
+  readonly reason: AudioFailure;
+
+  constructor(readonly permanent: boolean, reason?: AudioFailure) {
     super("audio");
+    this.name = "DownloadFailed";
+    this.reason = reason ?? (permanent ? "没有读音" : "请求失败");
   }
 }
 
@@ -43,10 +112,10 @@ export function isPlayableAudioFile(path: string): boolean {
   return (kind === "mp3" && path.endsWith(".mp3")) || (kind === "wav" && path.endsWith(".wav"));
 }
 
-export async function fetchAudioBytes(fetchImpl: typeof fetch, url: string): Promise<Buffer> {
+export async function fetchAudioBytes(url: string): Promise<Buffer> {
   let response: Response;
   try {
-    response = await fetchImpl(url, { signal: AbortSignal.timeout(30_000) });
+    response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
   } catch {
     throw new DownloadFailed(false);
   }
@@ -55,7 +124,7 @@ export async function fetchAudioBytes(fetchImpl: typeof fetch, url: string): Pro
   const bytes = Buffer.from(await response.arrayBuffer());
   if (bytes.length < 32) throw new DownloadFailed(true);
   const kind = audioKind(bytes);
-  if (!kind) throw new DownloadFailed(false);
+  if (!kind) throw new DownloadFailed(false, "文件无效");
   return bytes;
 }
 

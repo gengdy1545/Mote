@@ -2,9 +2,9 @@
 
 Practice vocabulary in the terminal.
 
-Mote shows one word at a time and resumes at the last position. The list can be today's Maimemo task, a built-in book (`cet4`, `cet6`, `ielts`, `toefl`), or a list imported from a file. Maimemo still owns its review schedule. Practice on this machine is not sent back, and Mote does not choose the next review date.
+Mote shows one word at a time. The list may be today's Maimemo task, a built-in book, a book created in Mote, or a list imported from a file.
 
-Requires Node.js 22 or newer. This version runs on macOS only. The command is `mote`. The npm package is `@gengdy/mote`.
+Requires Node.js 22 or newer, on macOS and Linux. The command is `mote`. The npm package is `@gengdy/mote`.
 
 ## Install
 
@@ -14,7 +14,7 @@ Requires Node.js 22 or newer. This version runs on macOS only. The command is `m
 npm install -g @gengdy/mote
 ```
 
-This installs the published build. It does not use this repository. If `mote` is already on your PATH, add `--force`.
+This installs the published build, not this repository. If `mote` is already on the PATH, add `--force`.
 
 ### From this repository
 
@@ -23,31 +23,35 @@ npm install
 npm install -g .
 ```
 
-`npm install` compiles the program. `npm install -g .` copies that build into npm's global folder. After source changes, run `npm install -g .` again. Moving this directory does not affect the installed command.
+`npm install` compiles the program. `npm install -g .` copies that build into the global folder of npm. After source changes, run it again. Moving this directory does not affect the installed command.
 
 ## Commands
 
 ```text
-mote                     Open the current book and resume at the last word
-mote review --limit 10   Practice at most 10 words this run
-mote lookup apple        Look the word up in Maimemo, then show the phonetic, gloss, phrases, and an example
+mote                     Open the current book at the last word
+mote lookup apple        Show the card and play it once
 mote sync                Pull today's Maimemo task and official progress
-mote stats               Show today's official progress and how many of those words were revealed locally
+mote stats               Show the official progress
 mote auth                Verify the API token
+mote words               Page through the current book
 mote book                Show the current book
 mote book maimemo        Switch to maimemo, cet4, cet6, ielts, toefl, or a custom book
+mote book create travel  Create an empty book and switch to it
+mote books               Show the book directory
+mote books ~/books       Move custom books into that directory
+mote add apple           Append a word to the current book
 mote book add travel ~/words.txt
-                         Import a word list and switch to it. One word per line
+                         Import a file as a book and switch to it
+mote book travel add apple
+                         Append a word without switching books
 mote book remove travel  Delete a custom book
-mote fetch               Download missing glosses and audio for the current book
-mote fetch cet4          Same, for a named book such as cet4 or travel
+mote fetch               Download missing glosses and audio
+mote fetch cet4          Download them for a named book
 ```
 
-`mote lookup`, `mote sync`, `mote stats`, and `mote auth` need a Maimemo token. `mote lookup` also requires the word to exist in Maimemo. A built-in or imported book can be practiced without a token.
+`mote sync`, `mote stats`, and `mote auth` need a Maimemo token. Practice, `mote words`, and `mote fetch` need one only on the Maimemo book.
 
-Opening a word checks the local database and downloads any missing gloss or audio. Those downloads continue after you move to another word. `Space` shows or hides the gloss. Showing it also plays audio when the file is ready, and `p` plays it again. A control stays dim until its data is stored locally. `←` and `→` move between words. `g`, a number, and Enter jump to that position. `Esc` cancels the jump. `q` saves and quits.
-
-`mote fetch` walks one word at a time. For Maimemo, the list is today's task. `mote stats` reads the saved snapshot, so run `mote sync` when that snapshot is missing.
+`mote book create` refuses an existing name or file. `mote book add` copies the file and leaves the original in place. An existing name overwrites that book after confirmation. `mote book remove` asks before deleting. `mote books ~/books` moves only the book files. Built-in books cannot be deleted.
 
 ## Configuration
 
@@ -55,23 +59,25 @@ The config file is `~/.config/mote.json`:
 
 ```json
 {
-  "maimemoToken": "Maimemo Open API token",
-  "book": "maimemo"
+  "book": "maimemo",
+  "pageSize": 7,
+  "dbPath": "/absolute/path/mote.db",
+  "booksPath": "/absolute/path/books",
+  "logPath": "/absolute/path/mote.log",
+  "maimemoToken": "Maimemo Open API token"
 }
 ```
 
-`book` chooses the list. Maimemo is `"book": "maimemo"`. Built-in books are `cet4`, `cet6`, `ielts`, and `toefl`. A custom name is lowercase, such as `"book": "travel"`. `mote book cet4` writes that field and keeps the token. Each book's position stays where you left it, including after a switch away and back. Importing the same name again replaces the list and returns to the first word. Built-in names cannot be deleted. Their spellings are the `cet4`, `cet6`, `ielts`, and `toefl` tags from [ECDICT](https://github.com/skywind3000/ECDICT), Copyright (c) 2025 Linwei, MIT License. That license covers the lists, and Mote's license does not replace it. The notice is in `NOTICE`.
+`book` stores the current choice. A custom name is lowercase. Editing or replacing the word list returns to the first word. The built-in spellings are the `cet4`, `cet6`, `ielts`, and `toefl` tags from [ECDICT](https://github.com/skywind3000/ECDICT), Copyright (c) 2025 Linwei, MIT License. That license covers the lists. The license of Mote does not replace it. The notice is in `NOTICE`.
 
-Copy the token from <https://open.maimemo.com/open/api/v1/tokens/openapi>. `mote auth --token <token>` writes the file. `MOTE_MAIMEMO_TOKEN` overrides the file. `MOTE_CONFIG` selects another config path.
+Copy the token from <https://open.maimemo.com/open/api/v1/tokens/openapi>. `mote auth --token <token>` writes the file.
 
-`downloadLog` is an optional filesystem path for failed gloss and audio downloads. The default is `~/.local/share/mote/download.log`. A `~` written in the file is not expanded.
+The first run writes `book`, `dbPath`, `logPath`, `booksPath`, and `pageSize`. `dbPath` defaults to `~/.local/share/mote/mote.db`, `logPath` to `~/.local/share/mote/mote.log`, and `booksPath` to `books/` beside the database, where every custom book is `{name}.txt`. Book names are listed in `books.json` beside the database. `pageSize` defaults to 7. Errors are appended to `logPath`.
 
-Phonetics, glosses, phrases, and examples need no extra key. Opening a word queries Youdao and [dictionaryapi.dev](https://dictionaryapi.dev/) once, then stores the result in local SQLite by spelling. One failed request does not discard a result from the other. Audio files sit beside the database in `audio/` and play with `afplay`.
+A leading `~` in `dbPath`, `logPath`, `booksPath`, or an imported word list expands to the home directory. Relative paths are accepted. Messages show the absolute path. An unresolvable path such as `~someone` is reported.
 
 ## Data
 
-Today's words, order, and official completion come from Maimemo. The number of words follows today's official target. A gloss saved in Maimemo replaces the dictionary senses. Phonetics, Chinese glosses, phrases, and the bilingual example come from Youdao. When Youdao has no Chinese gloss, English definitions come from dictionaryapi.dev. Audio uses Youdao's US pronunciation, and uses dictionaryapi.dev when Youdao has no audio file.
+Today's words, order, and official completion come from Maimemo. The count follows that day's official target, up to 1000. If the task is empty, open the Maimemo app and run `mote sync`. Maimemo practice is stored per account and per study day in Beijing time. The review schedule stays with Maimemo. Practice on this machine is not sent back, and Mote does not choose the next review date. The position of a local book is stored with that book.
 
-If today's task is empty, open the Maimemo app so it can finish the day's initialization, then run `mote sync`.
-
-The database is `~/.local/share/mote/mote.db`. Set `MOTE_DB` to move it. When `XDG_DATA_HOME` is set, the database and the default download log use that directory instead of `~/.local/share`. Maimemo practice is stored per account and per study day. The study day uses Beijing time. A local book's position is stored with that book. The dictionary cache is keyed only by spelling.
+Phonetics, glosses, phrases, and examples come from Youdao and [dictionaryapi.dev](https://dictionaryapi.dev/), with no extra key. Chinese senses are shown when Youdao has them. Otherwise the card shows English senses from dictionaryapi.dev. Audio uses the US pronunciation from Youdao, or dictionaryapi.dev when Youdao has no audio file. Files are stored in `audio/` beside the database and play with `afplay` on macOS, or `ffplay` or `mpv` on Linux.

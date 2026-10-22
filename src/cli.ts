@@ -1,19 +1,22 @@
 #!/usr/bin/env node
 import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { assertMacOS, configFilePath } from "./config.js";
+import { assertSupportedPlatform, configFilePath, ensureConfig, resolveDbPath, writeErrorLog } from "./config.js";
 import { helpText, parseArgs } from "./cli/args.js";
-import { runAuth, runBookCommand, runFetch, runLookup, runReview, runStats, runSync, type IO } from "./commands/run.js";
+import { runAuth, runBookCommand, runBooks, runFetch, runLookup, runReview, runStats, runSync, runWords, type IO } from "./commands/run.js";
 import { MaimemoError } from "./maimemo/errors.js";
-import { defaultDbPath } from "./storage/db.js";
 
-export async function main(argv: string[], io?: Partial<IO>): Promise<number> {
-  const runtime = createIO(io);
+export async function main(argv: string[]): Promise<number> {
+  const env = process.env;
+  const configPath = configFilePath(env);
   try {
-    assertMacOS();
+    const runtime = createIO();
+    assertSupportedPlatform();
+    ensureConfig(runtime.configPath, runtime.dbPath);
     const parsed = parseArgs(argv);
     if ("error" in parsed) {
       runtime.stderr(parsed.error);
+      writeErrorLog(runtime.configPath, runtime.env, parsed.error);
       runtime.stderr(helpText());
       return 1;
     }
@@ -24,31 +27,36 @@ export async function main(argv: string[], io?: Partial<IO>): Promise<number> {
     if (parsed.command === "auth") return await runAuth(runtime, parsed.token);
     if (parsed.command === "sync") return await runSync(runtime, parsed.token);
     if (parsed.command === "stats") return await runStats(runtime, parsed.token);
-    if (parsed.command === "lookup") return await runLookup(runtime, parsed.word, parsed.token);
-    if (parsed.command === "book") return runBookCommand(runtime, parsed.request);
+    if (parsed.command === "lookup") return await runLookup(runtime, parsed.word);
+    if (parsed.command === "words") return await runWords(runtime);
+    if (parsed.command === "add") return await runBookCommand(runtime, { action: "append", word: parsed.word });
+    if (parsed.command === "book") return await runBookCommand(runtime, parsed.request);
+    if (parsed.command === "books") return await runBooks(runtime, parsed.directory);
     if (parsed.command === "fetch") return await runFetch(runtime, parsed.book);
-    return await runReview(runtime, parsed.limit, parsed.token);
+    return await runReview(runtime, parsed.token);
   } catch (error) {
-    runtime.stderr(error instanceof MaimemoError ? error.message : "出现未预期的错误");
+    const shown = error instanceof MaimemoError ? error.message : "出现未预期的错误";
+    process.stderr.write(`${shown}\n`);
+    writeErrorLog(configPath, env, error instanceof MaimemoError ? shown : errorDetail(error));
     return 1;
   }
 }
 
-function createIO(overrides: Partial<IO> | undefined): IO {
-  const env = overrides?.env ?? process.env;
+function errorDetail(error: unknown): string {
+  if (error instanceof Error) return error.message || error.name;
+  return "出现未预期的错误";
+}
+
+function createIO(): IO {
+  const env = process.env;
+  const configPath = configFilePath(env);
   return {
-    fetch: overrides?.fetch ?? globalThis.fetch,
     env,
-    stdout: overrides?.stdout ?? ((text) => process.stdout.write(`${text}\n`)),
-    stderr: overrides?.stderr ?? ((text) => process.stderr.write(`${text}\n`)),
-    now: overrides?.now ?? (() => new Date()),
-    dbPath: overrides?.dbPath ?? defaultDbPath(env),
-    configPath: overrides?.configPath ?? configFilePath(env),
-    sleep: overrides?.sleep,
-    retryDelayMs: overrides?.retryDelayMs,
-    playAudio: overrides?.playAudio,
-    stopAudio: overrides?.stopAudio,
-    renderPractice: overrides?.renderPractice,
+    stdout: (text) => process.stdout.write(`${text}\n`),
+    stderr: (text) => process.stderr.write(`${text}\n`),
+    now: () => new Date(),
+    dbPath: resolveDbPath(configPath, env),
+    configPath,
   };
 }
 

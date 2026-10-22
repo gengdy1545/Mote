@@ -1,49 +1,24 @@
 import { MaimemoError, sanitize } from "./errors.js";
 
 const BASE_URL = "https://open.maimemo.com/open/";
+const TIMEOUT_MS = 30_000;
+const RETRY_DELAY_MS = 1000;
 
-export type RequestOptions = {
-  timeoutMs?: number;
-  sleep?: (ms: number) => Promise<void>;
-  retryDelayMs?: number;
-};
-
-export async function apiRequest(
-  fetchImpl: typeof fetch,
-  token: string,
-  method: "GET" | "POST",
-  path: string,
-  options?: {
-    query?: Record<string, string>;
-    body?: unknown;
-    timeoutMs?: number;
-    sleep?: (ms: number) => Promise<void>;
-    retryDelayMs?: number;
-  },
-): Promise<unknown> {
-  const timeoutMs = options?.timeoutMs ?? 30_000;
-  const sleep = options?.sleep ?? delay;
-  const retryDelayMs = options?.retryDelayMs ?? 1000;
+export async function apiRequest(token: string, path: string, body: unknown): Promise<unknown> {
+  const url = new URL(path.replace(/^\//, ""), BASE_URL);
   let allowedRetry = true;
 
   while (true) {
-    const url = new URL(path.replace(/^\//, ""), BASE_URL);
-    if (options?.query) {
-      for (const [key, value] of Object.entries(options.query)) {
-        url.searchParams.set(key, value);
-      }
-    }
-
     try {
-      const response = await fetchImpl(url, {
-        method,
+      const response = await fetch(url, {
+        method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
           Accept: "application/json",
           "Content-Type": "application/json",
         },
-        body: method === "POST" ? JSON.stringify(options?.body ?? {}) : undefined,
-        signal: AbortSignal.timeout(timeoutMs),
+        body: JSON.stringify(body ?? {}),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
       });
 
       if (response.status === 401) {
@@ -51,7 +26,7 @@ export async function apiRequest(
       }
       if (response.status === 429 && allowedRetry) {
         allowedRetry = false;
-        await sleep(retryDelayMs);
+        await delay(RETRY_DELAY_MS);
         continue;
       }
       if (response.status === 429) {
