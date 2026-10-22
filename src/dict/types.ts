@@ -19,23 +19,19 @@ export type DictWord = {
   phoneticUs: string;
   phoneticUk: string;
   audioUsPath: string;
-  fetchedAt: string;
   glossAt: string;
-  audioAt: string;
   senses: DictSense[];
   phrases: DictPhrase[];
   examples: DictExample[];
 };
 
-export function emptyDictWord(spelling: string, fetchedAt: string): DictWord {
+export function emptyDictWord(spelling: string): DictWord {
   return {
     spelling,
     phoneticUs: "",
     phoneticUk: "",
     audioUsPath: "",
-    fetchedAt,
     glossAt: "",
-    audioAt: "",
     senses: [],
     phrases: [],
     examples: [],

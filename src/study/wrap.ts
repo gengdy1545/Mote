@@ -15,14 +15,8 @@ function charWidth(char: string): number {
   return 1;
 }
 
-export function displayWidth(text: string): number {
-  let width = 0;
-  for (const char of text) width += charWidth(char);
-  return width;
-}
-
 /** Wrap a single paragraph. A short prefix such as "v." stays with the following text. */
-export function wrapParagraph(text: string, columns: number): string[] {
+function wrapParagraph(text: string, columns: number): string[] {
   const limit = Math.max(1, columns);
   if (text.length === 0) return [""];
 

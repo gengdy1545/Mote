@@ -1,14 +1,12 @@
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import { useEffect, useRef, useState } from "react";
 import type { DictWord } from "../dict/types.js";
-import type { Interpretation } from "../maimemo/types.js";
 import type { PracticeState } from "../study/practice.js";
 import { practiceText } from "../study/text.js";
 
 export type PracticeController = {
   initial: PracticeState;
   offline: boolean;
-  content: Record<string, Interpretation[]>;
   words: Record<string, DictWord | null>;
   reveal: () => PracticeState | Promise<PracticeState>;
   replay: () => void | Promise<void>;
@@ -17,6 +15,7 @@ export type PracticeController = {
   hide: () => PracticeState;
   quit: () => PracticeState;
   availability: () => { gloss: boolean; audio: boolean };
+  errors: () => string[];
   watch: (notify: () => void) => () => void;
 };
 
@@ -33,6 +32,14 @@ export function PracticeApp({ controller, columns }: { controller: PracticeContr
   const jumpRef = useRef(jumpDraft);
   jumpRef.current = jumpDraft;
   const [ready, setReady] = useState(() => controller.availability());
+  const [errors, setErrors] = useState(() => controller.errors());
+  const closed = useRef(false);
+  const leave = () => {
+    if (closed.current) return;
+    closed.current = true;
+    controller.quit();
+    exit();
+  };
 
   useEffect(() => {
     if (columns) return;
@@ -44,16 +51,19 @@ export function PracticeApp({ controller, columns }: { controller: PracticeContr
   }, [terminal, columns]);
 
   useEffect(() => {
-    setReady(controller.availability());
-    return controller.watch(() => setReady(controller.availability()));
+    const sync = () => {
+      setReady(controller.availability());
+      setErrors(controller.errors());
+    };
+    sync();
+    return controller.watch(sync);
   }, [controller, state.index]);
 
   useInput(async (input, key) => {
-    if (stateRef.current.status !== "practicing") return;
+    if (closed.current) return;
     if (jumpRef.current !== null) {
       if (input === "q") {
-        controller.quit();
-        exit();
+        leave();
         return;
       }
       if (key.escape) {
@@ -65,10 +75,7 @@ export function PracticeApp({ controller, columns }: { controller: PracticeContr
         setJumpDraft(null);
         if (!draft) return;
         const next = await Promise.resolve(controller.jump(Number(draft)));
-        if (next.status !== "practicing") {
-          exit();
-          return;
-        }
+        if (closed.current) return;
         setState(next);
         return;
       }
@@ -85,10 +92,7 @@ export function PracticeApp({ controller, columns }: { controller: PracticeContr
     }
     if (key.leftArrow || key.rightArrow) {
       const next = await Promise.resolve(controller.move(key.leftArrow ? -1 : 1));
-      if (next.status !== "practicing") {
-        exit();
-        return;
-      }
+      if (closed.current) return;
       setState(next);
       return;
     }
@@ -98,7 +102,9 @@ export function PracticeApp({ controller, columns }: { controller: PracticeContr
         setState(controller.hide());
         return;
       }
-      setState(await Promise.resolve(controller.reveal()));
+      const next = await Promise.resolve(controller.reveal());
+      if (closed.current) return;
+      setState(next);
       return;
     }
     if (input === "p") {
@@ -106,16 +112,12 @@ export function PracticeApp({ controller, columns }: { controller: PracticeContr
       await Promise.resolve(controller.replay());
       return;
     }
-    if (input === "q") {
-      controller.quit();
-      exit();
-    }
+    if (input === "q") leave();
   });
 
   const text = practiceText({
     state,
     offline: controller.offline,
-    content: controller.content,
     words: controller.words,
     columns: width,
   });
@@ -139,6 +141,11 @@ export function PracticeApp({ controller, columns }: { controller: PracticeContr
           <Text>{"    q 退出"}</Text>
         </Box>
       )}
+      {errors.map((line) => (
+        <Text key={line} color="red">
+          {line}
+        </Text>
+      ))}
     </Box>
   );
 }

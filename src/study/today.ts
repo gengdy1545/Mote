@@ -4,7 +4,7 @@ export type OrderedItem = {
   vocId: string;
 };
 
-/** Keep the official daily quota. A larger `limit` also returns later overdue words. */
+/** Keep the first dailyTotal items after sorting by official order. */
 export function selectTodayItems<T extends OrderedItem>(items: T[], dailyTotal: number): T[] {
   const sorted = [...items].sort(
     (a, b) => a.order - b.order || a.spelling.localeCompare(b.spelling) || a.vocId.localeCompare(b.vocId),

@@ -1,7 +1,14 @@
-import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { appendErrorLog } from "../config.js";
 import type { DatabaseSync } from "node:sqlite";
 import { audioKind, DownloadFailed, fetchAudioBytes, isPlayableAudioFile, writeAudioFile, youdaoAudioUrl } from "./audio.js";
+
+export class ShownFailure extends Error {
+  constructor(readonly part: "gloss" | "audio") {
+    super(part);
+    this.name = "ShownFailure";
+  }
+}
 import { parseEnglishDictionary } from "./english.js";
 import type { DictExample, DictPhrase, DictSense, DictWord } from "./types.js";
 import { dictionaryKey, emptyDictWord } from "./types.js";
@@ -15,7 +22,7 @@ export function getDictWord(db: DatabaseSync, spelling: string): DictWord | null
   const key = dictionaryKey(spelling);
   const row = db
     .prepare(
-      `SELECT spelling, phonetic_us, phonetic_uk, audio_us_path, fetched_at, gloss_at, audio_at
+      `SELECT spelling, phonetic_us, phonetic_uk, audio_us_path, gloss_at
        FROM dict_words WHERE spelling = ?`,
     )
     .get(key) as
@@ -24,9 +31,7 @@ export function getDictWord(db: DatabaseSync, spelling: string): DictWord | null
         phonetic_us: string;
         phonetic_uk: string;
         audio_us_path: string;
-        fetched_at: string;
         gloss_at: string;
-        audio_at: string;
       }
     | undefined;
   if (!row) return null;
@@ -35,9 +40,7 @@ export function getDictWord(db: DatabaseSync, spelling: string): DictWord | null
     phoneticUs: row.phonetic_us,
     phoneticUk: row.phonetic_uk,
     audioUsPath: row.audio_us_path,
-    fetchedAt: row.fetched_at,
     glossAt: row.gloss_at,
-    audioAt: row.audio_at,
     senses: db
       .prepare(`SELECT pos, gloss, lang FROM dict_senses WHERE spelling = ? ORDER BY position`)
       .all(key) as DictSense[],
@@ -55,14 +58,13 @@ function saveGloss(db: DatabaseSync, word: DictWord): void {
   db.exec("BEGIN");
   try {
     db.prepare(
-      `INSERT INTO dict_words (spelling, phonetic_us, phonetic_uk, audio_us_path, fetched_at, gloss_at, audio_at)
-       VALUES (?, ?, ?, '', ?, ?, '')
+      `INSERT INTO dict_words (spelling, phonetic_us, phonetic_uk, audio_us_path, gloss_at)
+       VALUES (?, ?, ?, '', ?)
        ON CONFLICT(spelling) DO UPDATE SET
          phonetic_us = excluded.phonetic_us,
          phonetic_uk = excluded.phonetic_uk,
-         fetched_at = excluded.fetched_at,
          gloss_at = excluded.gloss_at`,
-    ).run(key, word.phoneticUs, word.phoneticUk, word.fetchedAt, word.glossAt);
+    ).run(key, word.phoneticUs, word.phoneticUk, word.glossAt);
     db.prepare(`DELETE FROM dict_senses WHERE spelling = ?`).run(key);
     db.prepare(`DELETE FROM dict_phrases WHERE spelling = ?`).run(key);
     db.prepare(`DELETE FROM dict_examples WHERE spelling = ?`).run(key);
@@ -79,40 +81,11 @@ function saveGloss(db: DatabaseSync, word: DictWord): void {
 function saveAudio(db: DatabaseSync, word: DictWord): void {
   const key = dictionaryKey(word.spelling);
   db.prepare(
-    `INSERT INTO dict_words (spelling, phonetic_us, phonetic_uk, audio_us_path, fetched_at, gloss_at, audio_at)
-     VALUES (?, '', '', ?, ?, '', ?)
+    `INSERT INTO dict_words (spelling, phonetic_us, phonetic_uk, audio_us_path, gloss_at)
+     VALUES (?, '', '', ?, '')
      ON CONFLICT(spelling) DO UPDATE SET
-       audio_us_path = excluded.audio_us_path,
-       audio_at = excluded.audio_at`,
-  ).run(key, word.audioUsPath, word.fetchedAt, word.audioAt);
-}
-
-export function saveDictWord(db: DatabaseSync, word: DictWord): void {
-  const key = dictionaryKey(word.spelling);
-  db.exec("BEGIN");
-  try {
-    db.prepare(`DELETE FROM dict_senses WHERE spelling = ?`).run(key);
-    db.prepare(`DELETE FROM dict_phrases WHERE spelling = ?`).run(key);
-    db.prepare(`DELETE FROM dict_examples WHERE spelling = ?`).run(key);
-    db.prepare(
-      `INSERT INTO dict_words (spelling, phonetic_us, phonetic_uk, audio_us_path, fetched_at, gloss_at, audio_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(spelling) DO UPDATE SET
-         phonetic_us = excluded.phonetic_us,
-         phonetic_uk = excluded.phonetic_uk,
-         audio_us_path = excluded.audio_us_path,
-         fetched_at = excluded.fetched_at,
-         gloss_at = excluded.gloss_at,
-         audio_at = excluded.audio_at`,
-    ).run(key, word.phoneticUs, word.phoneticUk, word.audioUsPath, word.fetchedAt, word.glossAt, word.audioAt);
-    insertRows(db, "dict_senses", key, word.senses.map((sense) => [sense.pos, sense.gloss, sense.lang]));
-    insertRows(db, "dict_phrases", key, word.phrases.map((phrase) => [phrase.phrase, phrase.meaning]));
-    insertRows(db, "dict_examples", key, word.examples.map((example) => [example.sentence, example.translation]));
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
+       audio_us_path = excluded.audio_us_path`,
+  ).run(key, word.audioUsPath);
 }
 
 export function glossReady(word: DictWord | null): boolean {
@@ -127,14 +100,12 @@ export function audioReady(word: DictWord | null, dbPath: string): boolean {
   return isPlayableAudioFile(join(dirname(dbPath), word.audioUsPath));
 }
 
-export function logDownload(logPath: string, spelling: string, part: "gloss" | "audio", reason: string): void {
-  mkdirSync(dirname(logPath), { recursive: true });
-  appendFileSync(logPath, `${new Date().toISOString()}  ${spelling}  ${part}  ${reason}\n`);
+function logDictFailure(logPath: string, spelling: string, part: "释义" | "发音", reason: string): void {
+  appendErrorLog(logPath, `${part} ${spelling}：${reason}`);
 }
 
 export async function ensureGloss(
   db: DatabaseSync,
-  fetchImpl: typeof fetch,
   spelling: string,
   fetchedAt: string,
   logPath: string,
@@ -142,22 +113,22 @@ export async function ensureGloss(
   const cached = getDictWord(db, spelling);
   if (cached && glossReady(cached)) return cached;
   const [youdao, english] = await Promise.all([
-    fetchStatus(fetchImpl, `https://dict.youdao.com/jsonapi?q=${encodeURIComponent(spelling)}`),
-    fetchStatus(fetchImpl, `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(spelling)}`),
+    fetchStatus(`https://dict.youdao.com/jsonapi?q=${encodeURIComponent(spelling)}`),
+    fetchStatus(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(spelling)}`),
   ]);
   const requestFailed = youdao.kind === "error" || english.kind === "error";
   const youdaoBody = parseYoudaoDictionary(youdao.kind === "ok" ? youdao.body : null);
   const englishBody = parseEnglishDictionary(english.kind === "ok" ? english.body : null);
-  const word = cached ?? emptyDictWord(dictionaryKey(spelling), fetchedAt);
+  const word = cached ?? emptyDictWord(dictionaryKey(spelling));
   word.phoneticUs = youdaoBody.phoneticUs || englishBody.phonetic;
   word.phoneticUk = youdaoBody.phoneticUk;
   word.senses = [...youdaoBody.senses.slice(0, 3), ...englishBody.senses.slice(0, 2)];
   word.phrases = youdaoBody.phrases.slice(0, 2);
   word.examples = youdaoBody.examples.length > 0 ? youdaoBody.examples.slice(0, 1) : englishBody.examples.slice(0, 1);
   word.glossAt = fetchedAt;
-  word.fetchedAt = fetchedAt;
   if (!glossReady(word)) {
-    logDownload(logPath, spelling, "gloss", requestFailed ? "请求失败" : "没有获取到释义");
+    logDictFailure(logPath, spelling, "释义", requestFailed ? "请求失败" : "没有获取到释义");
+    if (requestFailed) throw new ShownFailure("gloss");
     throw new Error("gloss");
   }
   saveGloss(db, word);
@@ -167,27 +138,24 @@ export async function ensureGloss(
 export async function ensureAudio(
   db: DatabaseSync,
   dbPath: string,
-  fetchImpl: typeof fetch,
   spelling: string,
-  fetchedAt: string,
   logPath: string,
 ): Promise<DictWord> {
   const cached = getDictWord(db, spelling);
-  if (audioReady(cached, dbPath)) return cached ?? emptyDictWord(dictionaryKey(spelling), fetchedAt);
-  const word = cached ?? emptyDictWord(dictionaryKey(spelling), fetchedAt);
+  if (audioReady(cached, dbPath)) return cached ?? emptyDictWord(dictionaryKey(spelling));
+  const word = cached ?? emptyDictWord(dictionaryKey(spelling));
   try {
-    word.audioUsPath = await downloadPronunciation(fetchImpl, dbPath, spelling);
+    word.audioUsPath = await downloadPronunciation(dbPath, spelling);
   } catch (error) {
-    const reason = error instanceof DownloadFailed && error.permanent ? "没有读音" : "请求失败或文件无法播放";
-    logDownload(logPath, spelling, "audio", reason);
+    const reason = error instanceof DownloadFailed ? error.reason : "请求失败";
+    logDictFailure(logPath, spelling, "发音", reason);
+    if (reason === "请求失败") throw new ShownFailure("audio");
     throw error;
   }
   if (!isPlayableAudioFile(join(dirname(dbPath), word.audioUsPath))) {
-    logDownload(logPath, spelling, "audio", "文件无法播放");
-    throw new DownloadFailed(false);
+    logDictFailure(logPath, spelling, "发音", "文件无效");
+    throw new DownloadFailed(false, "文件无效");
   }
-  word.audioAt = fetchedAt;
-  word.fetchedAt = word.fetchedAt || fetchedAt;
   saveAudio(db, word);
   return getDictWord(db, spelling) ?? word;
 }
@@ -195,18 +163,17 @@ export async function ensureAudio(
 export async function ensureDictWord(
   db: DatabaseSync,
   dbPath: string,
-  fetchImpl: typeof fetch,
   spelling: string,
   fetchedAt: string,
   logPath: string,
 ): Promise<DictWord> {
-  await ensureGloss(db, fetchImpl, spelling, fetchedAt, logPath).catch(() => undefined);
-  await ensureAudio(db, dbPath, fetchImpl, spelling, fetchedAt, logPath).catch(() => undefined);
-  return getDictWord(db, spelling) ?? emptyDictWord(dictionaryKey(spelling), fetchedAt);
+  await ensureGloss(db, spelling, fetchedAt, logPath).catch(() => undefined);
+  await ensureAudio(db, dbPath, spelling, logPath).catch(() => undefined);
+  return getDictWord(db, spelling) ?? emptyDictWord(dictionaryKey(spelling));
 }
 
-async function downloadPronunciation(fetchImpl: typeof fetch, dbPath: string, spelling: string): Promise<string> {
-  const bytes = await loadAudioBytes(fetchImpl, spelling);
+async function downloadPronunciation(dbPath: string, spelling: string): Promise<string> {
+  const bytes = await loadAudioBytes(spelling);
   const kind = audioKind(bytes);
   if (!kind) throw new DownloadFailed(false);
   const filename = `${audioSlug(spelling)}-us.${kind}`;
@@ -215,17 +182,17 @@ async function downloadPronunciation(fetchImpl: typeof fetch, dbPath: string, sp
   return join("audio", filename);
 }
 
-async function loadAudioBytes(fetchImpl: typeof fetch, spelling: string): Promise<Buffer> {
+async function loadAudioBytes(spelling: string): Promise<Buffer> {
   try {
-    return await fetchAudioBytes(fetchImpl, youdaoAudioUrl(spelling));
+    return await fetchAudioBytes(youdaoAudioUrl(spelling));
   } catch (error) {
     if (!(error instanceof DownloadFailed) || !error.permanent) throw error;
   }
-  const english = await fetchStatus(fetchImpl, `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(spelling)}`);
+  const english = await fetchStatus(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(spelling)}`);
   if (english.kind === "error") throw new DownloadFailed(false);
   const audioUrl = parseEnglishDictionary(english.kind === "ok" ? english.body : null).audioUrl;
   if (!audioUrl) throw new DownloadFailed(true);
-  return fetchAudioBytes(fetchImpl, audioUrl);
+  return fetchAudioBytes(audioUrl);
 }
 
 function audioSlug(spelling: string): string {
@@ -234,11 +201,10 @@ function audioSlug(spelling: string): string {
 }
 
 async function fetchStatus(
-  fetchImpl: typeof fetch,
   url: string,
 ): Promise<{ kind: "ok"; body: unknown } | { kind: "missing" } | { kind: "error" }> {
   try {
-    const response = await fetchImpl(url, { signal: AbortSignal.timeout(30_000) });
+    const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
     if (response.status === 404) return { kind: "missing" };
     if (!response.ok) return { kind: "error" };
     return { kind: "ok", body: await response.json() };

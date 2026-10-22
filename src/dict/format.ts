@@ -1,17 +1,16 @@
-import type { Interpretation } from "../maimemo/types.js";
 import type { DictWord } from "./types.js";
 
-export function dictionaryText(word: DictWord | null, official: Interpretation[] | null): string {
-  if (!word && official === null) return "正在读取释义";
-  const lines: string[] = [];
+export function phoneticLabel(word: DictWord | null): string {
   const phonetic = word?.phoneticUs || word?.phoneticUk || "";
-  if (phonetic) lines.push(phonetic.startsWith("/") ? phonetic : `/${phonetic}/`);
+  if (!phonetic) return "";
+  return phonetic.startsWith("/") ? phonetic : `/${phonetic}/`;
+}
 
-  const senses = senseLines(word, official);
-  if (senses.length > 0) {
-    if (lines.length > 0) lines.push("");
-    lines.push(...senses);
-  }
+export function dictionaryText(word: DictWord | null): string {
+  if (!word) return "正在读取释义";
+  const lines: string[] = [];
+  const senses = senseLines(word);
+  if (senses.length > 0) lines.push(...senses);
 
   const phrases = (word?.phrases ?? [])
     .map((phrase) => {
@@ -37,17 +36,7 @@ export function dictionaryText(word: DictWord | null, official: Interpretation[]
   return lines.some((line) => line.trim().length > 0) ? lines.join("\n") : "没有查到释义";
 }
 
-function senseLines(word: DictWord | null, official: Interpretation[] | null): string[] {
-  const officialLines = (official ?? [])
-    .map((item) => {
-      const text = item.text.trim();
-      if (!text) return "";
-      const tags = item.tags.length > 0 ? ` [${item.tags.join("、")}]` : "";
-      return `${text}${tags}`;
-    })
-    .filter(Boolean);
-  if (officialLines.length > 0) return officialLines;
-
+function senseLines(word: DictWord | null): string[] {
   const chinese = (word?.senses ?? []).filter((sense) => sense.lang === "zh").slice(0, 2);
   const english = (word?.senses ?? []).filter((sense) => sense.lang === "en").slice(0, 2);
   return (chinese.length > 0 ? chinese : english).map((sense) => senseLine(sense.pos, sense.gloss));
