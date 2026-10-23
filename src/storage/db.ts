@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "./sqlite.js";
 import type { Progress, TodayItem } from "../maimemo/types.js";
 import type { StoredSession } from "../study/practice.js";
 
