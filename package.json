@@ -1,6 +1,6 @@
 {
   "name": "@gengdy/mote",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Practice vocabulary in the terminal.",
   "license": "MIT",
   "type": "module",
